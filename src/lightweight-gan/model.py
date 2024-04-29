@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 from kornia.filters import filter2d
 from einops import rearrange, reduce, repeat
+from einops.layers.torch import Rearrange
 
 
 
@@ -108,6 +109,155 @@ class Noise(nn.Module):
 
         return x + self.weight * noise
     
+
+class ChanNorm(nn.Module):
+    def __init__(self, dim, eps = 1e-5):
+        super().__init__()
+        self.eps = eps
+        self.g = nn.Parameter(torch.ones(1, dim, 1, 1))
+        self.b = nn.Parameter(torch.zeros(1, dim, 1, 1))
+
+    def forward(self, x):
+        var = torch.var(x, dim = 1, unbiased = False, keepdim = True)
+        mean = torch.mean(x, dim = 1, keepdim = True)
+        return (x - mean) / (var + self.eps).sqrt() * self.g + self.b
+
+class PreNorm(nn.Module):
+    def __init__(self, dim, fn):
+        super().__init__()
+        self.fn = fn
+        self.norm = ChanNorm(dim)
+
+    def forward(self, x):
+        return self.fn(self.norm(x))
+
+class Residual(nn.Module):
+    def __init__(self, fn):
+        super().__init__()
+        self.fn = fn
+
+    def forward(self, x):
+        return self.fn(x) + x
+    
+class SumBranches(nn.Module):
+    def __init__(self, branches):
+        super().__init__()
+        self.branches = nn.ModuleList(branches)
+    def forward(self, x):
+        return sum(map(lambda fn: fn(x), self.branches))
+    
+
+def SPConvDownsample(dim, dim_out = None):
+    # https://arxiv.org/abs/2208.03641 shows this is the most optimal way to downsample
+    # named SP-conv in the paper, but basically a pixel unshuffle
+    dim_out = default(dim_out, dim)
+    return nn.Sequential(
+        Rearrange('b c (h s1) (w s2) -> b (c s1 s2) h w', s1 = 2, s2 = 2),
+        nn.Conv2d(dim * 4, dim_out, 1)
+    )
+
+class DepthWiseConv2d(nn.Module):
+    def __init__(self, dim_in, dim_out, kernel_size, padding = 0, stride = 1, bias = True):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(dim_in, dim_in, kernel_size = kernel_size, padding = padding, groups = dim_in, stride = stride, bias = bias),
+            nn.Conv2d(dim_in, dim_out, kernel_size = 1, bias = bias)
+        )
+    def forward(self, x):
+        return self.net(x)
+    
+class LinearAttention(nn.Module):
+    def __init__(self, dim, dim_head = 64, heads = 8, kernel_size = 3):
+        super().__init__()
+        self.scale = dim_head ** -0.5
+        self.heads = heads
+        self.dim_head = dim_head
+        inner_dim = dim_head * heads
+
+        self.kernel_size = kernel_size
+        self.nonlin = nn.GELU()
+
+        self.to_lin_q = nn.Conv2d(dim, inner_dim, 1, bias = False)
+        self.to_lin_kv = DepthWiseConv2d(dim, inner_dim * 2, 3, padding = 1, bias = False)
+
+        self.to_q = nn.Conv2d(dim, inner_dim, 1, bias = False)
+        self.to_kv = nn.Conv2d(dim, inner_dim * 2, 1, bias = False)
+
+        self.to_out = nn.Conv2d(inner_dim * 2, dim, 1)
+
+    def forward(self, fmap):
+        h, x, y = self.heads, *fmap.shape[-2:]
+
+        # linear attention
+
+        lin_q, lin_k, lin_v = (self.to_lin_q(fmap), *self.to_lin_kv(fmap).chunk(2, dim = 1))
+        lin_q, lin_k, lin_v = map(lambda t: rearrange(t, 'b (h c) x y -> (b h) (x y) c', h = h), (lin_q, lin_k, lin_v))
+
+        lin_q = lin_q.softmax(dim = -1)
+        lin_k = lin_k.softmax(dim = -2)
+
+        lin_q = lin_q * self.scale
+
+        context = einsum('b n d, b n e -> b d e', lin_k, lin_v)
+        lin_out = einsum('b n d, b d e -> b n e', lin_q, context)
+        lin_out = rearrange(lin_out, '(b h) (x y) d -> b (h d) x y', h = h, x = x, y = y)
+
+        # conv-like full attention
+
+        q, k, v = (self.to_q(fmap), *self.to_kv(fmap).chunk(2, dim = 1))
+        q, k, v = map(lambda t: rearrange(t, 'b (h c) x y -> (b h) c x y', h = h), (q, k, v))
+
+        k = F.unfold(k, kernel_size = self.kernel_size, padding = self.kernel_size // 2)
+        v = F.unfold(v, kernel_size = self.kernel_size, padding = self.kernel_size // 2)
+
+        k, v = map(lambda t: rearrange(t, 'b (d j) n -> b n j d', d = self.dim_head), (k, v))
+
+        q = rearrange(q, 'b c ... -> b (...) c') * self.scale
+
+        sim = einsum('b i d, b i j d -> b i j', q, k)
+        sim = sim - sim.amax(dim = -1, keepdim = True).detach()
+
+        attn = sim.softmax(dim = -1)
+
+        full_out = einsum('b i j, b i j d -> b i d', attn, v)
+        full_out = rearrange(full_out, '(b h) (x y) d -> b (h d) x y', h = h, x = x, y = y)
+
+        # add outputs of linear attention + conv like full attention
+
+        lin_out = self.nonlin(lin_out)
+        out = torch.cat((lin_out, full_out), dim = 1)
+        return self.to_out(out)
+    
+
+class SimpleDecoder(nn.Module):
+    def __init__(
+        self,
+        *,
+        chan_in,
+        chan_out = 3,
+        num_upsamples = 4,
+    ):
+        super().__init__()
+
+        self.layers = nn.ModuleList([])
+        final_chan = chan_out
+        chans = chan_in
+
+        for ind in range(num_upsamples):
+            last_layer = ind == (num_upsamples - 1)
+            chan_out = chans if not last_layer else final_chan * 2
+            layer = nn.Sequential(
+                PixelShuffleUpsample(chans),
+                nn.Conv2d(chans, chan_out, 3, padding = 1),
+                nn.GLU(dim = 1)
+            )
+            self.layers.append(layer)
+            chans //= 2
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x
     
 class Generator(nn.Module):
     def __init__(
@@ -214,6 +364,125 @@ class Generator(nn.Module):
                 x = x * residuals[next_res]
 
         return self.out_conv(x)
+
+
+class Discriminator(nn.Module):
+    def __init__(
+        self,
+        *,
+        image_size,
+        fmap_max = 512,
+        fmap_inverse_coef = 12,
+        transparent = False,
+        greyscale = False,
+        disc_output_size = 5,
+        attn_res_layers = []
+    ):
+        super().__init__()
+        resolution = log2(image_size)
+        assert is_power_of_two(image_size), 'image size must be a power of 2'
+        assert disc_output_size in {1, 5}, 'discriminator output dimensions can only be 5x5 or 1x1'
+
+        resolution = int(resolution)
+
+        if transparent:
+            init_channel = 4
+        elif greyscale:
+            init_channel = 1
+        else:
+            init_channel = 3
+
+        num_non_residual_layers = max(0, int(resolution) - 8)
+        num_residual_layers = 8 - 3
+
+        non_residual_resolutions = range(min(8, resolution), 2, -1)
+        features = list(map(lambda n: (n,  2 ** (fmap_inverse_coef - n)), non_residual_resolutions))
+        features = list(map(lambda n: (n[0], min(n[1], fmap_max)), features))
+
+        if num_non_residual_layers == 0:
+            res, _ = features[0]
+            features[0] = (res, init_channel)
+
+        chan_in_out = list(zip(features[:-1], features[1:]))
+
+        self.non_residual_layers = nn.ModuleList([])
+        for ind in range(num_non_residual_layers):
+            first_layer = ind == 0
+            last_layer = ind == (num_non_residual_layers - 1)
+            chan_out = features[0][-1] if last_layer else init_channel
+
+            self.non_residual_layers.append(nn.Sequential(
+                Blur(),
+                nn.Conv2d(init_channel, chan_out, 4, stride = 2, padding = 1),
+                nn.LeakyReLU(0.1)
+            ))
+
+        self.residual_layers = nn.ModuleList([])
+
+        for (res, ((_, chan_in), (_, chan_out))) in zip(non_residual_resolutions, chan_in_out):
+            image_width = 2 ** res
+
+            attn = None
+
+            self.residual_layers.append(nn.ModuleList([
+                SumBranches([
+                    nn.Sequential(
+                        Blur(),
+                        SPConvDownsample(chan_in, chan_out),
+                        nn.LeakyReLU(0.1),
+                        nn.Conv2d(chan_out, chan_out, 3, padding = 1),
+                        nn.LeakyReLU(0.1)
+                    ),
+                    nn.Sequential(
+                        Blur(),
+                        nn.AvgPool2d(2),
+                        nn.Conv2d(chan_in, chan_out, 1),
+                        nn.LeakyReLU(0.1),
+                    )
+                ]),
+                attn
+            ]))
+
+        last_chan = features[-1][-1]
+        if disc_output_size == 5:
+            self.to_logits = nn.Sequential(
+                nn.Conv2d(last_chan, last_chan, 1),
+                nn.LeakyReLU(0.1),
+                nn.Conv2d(last_chan, 1, 4)
+            )
+        elif disc_output_size == 1:
+            self.to_logits = nn.Sequential(
+                Blur(),
+                nn.Conv2d(last_chan, last_chan, 3, stride = 2, padding = 1),
+                nn.LeakyReLU(0.1),
+                nn.Conv2d(last_chan, 1, 4)
+            )
+
+        self.to_shape_disc_out = nn.Sequential(
+            nn.Conv2d(init_channel, 64, 3, padding = 1),
+            Residual(PreNorm(64, LinearAttention(64))),
+            SumBranches([
+                nn.Sequential(
+                    Blur(),
+                    SPConvDownsample(64, 32),
+                    nn.LeakyReLU(0.1),
+                    nn.Conv2d(32, 32, 3, padding = 1),
+                    nn.LeakyReLU(0.1)
+                ),
+                nn.Sequential(
+                    Blur(),
+                    nn.AvgPool2d(2),
+                    nn.Conv2d(64, 32, 1),
+                    nn.LeakyReLU(0.1),
+                )
+            ]),
+            Residual(PreNorm(32, LinearAttention(32))),
+            nn.AdaptiveAvgPool2d((4, 4)),
+            nn.Conv2d(32, 1, 4)
+        )
+
+        self.decoder1 = SimpleDecoder(chan_in = last_chan, chan_out = init_channel)
+        self.decoder2 = SimpleDecoder(chan_in = features[-2][-1], chan_out = init_channel) if resolution >= 9 else None
 
 
 class LightWeightGan(nn.Module):
