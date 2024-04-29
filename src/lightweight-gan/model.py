@@ -6,21 +6,12 @@ import torch.nn.functional as F
 from kornia.filters import filter2d
 from einops import rearrange, reduce, repeat
 from einops.layers.torch import Rearrange
-
+from utils import default, is_power_of_two
 
 
 def set_requires_grad(model, bool):
     for p in model.parameters():
         p.requires_grad = bool
-
-def is_power_of_two(val):
-    return log2(val).is_integer()
-
-
-def default(val, d):
-    if val is None:
-        return d
-    return val
 
 
 class GlobalContext(nn.Module):
@@ -510,7 +501,7 @@ class LightWeightGan(nn.Module):
         freq_chan_attn = False,
         ttur_mult = 1.,
         lr = 2e-4,
-        rank = 0,
+        antialias = False
     ):
         super().__init__()
         self.latent_dim = latent_dim
