@@ -485,6 +485,15 @@ class Discriminator(nn.Module):
         self.decoder2 = SimpleDecoder(chan_in = features[-2][-1], chan_out = init_channel) if resolution >= 9 else None
 
 
+class EMA():
+    def __init__(self, beta):
+        super().__init__()
+        self.beta = beta
+    def update_average(self, old, new):
+        if old is None:
+            return new
+        return old * self.beta + (1 - self.beta) * new
+    
 class LightWeightGan(nn.Module):
     def __init__(
         self,
@@ -543,3 +552,23 @@ class LightWeightGan(nn.Module):
 
         self.apply(self._init_weights)
         self.reset_parameter_averaging()
+
+
+    def _init_weights(self, m):
+        if type(m) in {nn.Conv2d, nn.Linear}:
+            nn.init.kaiming_normal_(m.weight, a=0, mode='fan_in', nonlinearity='leaky_relu')
+
+    def EMA(self):
+        def update_moving_average(ma_model, current_model):
+            for current_params, ma_params in zip(current_model.parameters(), ma_model.parameters()):
+                old_weight, up_weight = ma_params.data, current_params.data
+                ma_params.data = self.ema_updater.update_average(old_weight, up_weight)
+
+            for current_buffer, ma_buffer in zip(current_model.buffers(), ma_model.buffers()):
+                new_buffer_value = self.ema_updater.update_average(ma_buffer, current_buffer)
+                ma_buffer.copy_(new_buffer_value)
+
+        update_moving_average(self.GE, self.G)
+
+    def reset_parameter_averaging(self):
+        self.GE.load_state_dict(self.G.state_dict())
