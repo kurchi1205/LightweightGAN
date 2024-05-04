@@ -2,6 +2,7 @@ from math import floor
 from utils import is_power_of_two
 from pathlib import Path
 from model import init_GAN
+from data import get_data
 from accelerate import Accelerator
 from torch.optim import Adam
 
@@ -83,6 +84,8 @@ class Trainer:
         self.run = None
         self.hparams = args.hparams
 
+        train_dataset, val_dataset, test_dataset = get_data(self.image_size, self.aug_prob)
+        
         self.G, self.D, self.GE = init_GAN(
             GAN_params = self.GAN_params,
             latent_dim = self.latent_dim,

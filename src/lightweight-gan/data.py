@@ -51,3 +51,16 @@ class ImageDataset(Dataset):
     def __getitem__(self, index):
         img = self.data.image[index]
         return self.transform(img)
+    
+
+def get_data(image_size, aug_prob):
+    train, test, val = load_data()
+
+    if aug_prob is None and len(train) < 1e5:
+        aug_prob = min(0.5, (1e5 - len(train)) * 3e-6)
+        print(f'autosetting augmentation probability to {round(aug_prob * 100)}%')
+
+    train_dataset = ImageDataset(train, image_size=image_size, aug_prob=aug_prob)
+    val_dataset = ImageDataset(val, image_size=image_size, aug_prob=aug_prob)
+    test_dataset = ImageDataset(test, image_size=image_size, aug_prob=0)
+    return train_dataset, val_dataset, test_dataset
