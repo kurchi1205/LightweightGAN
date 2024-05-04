@@ -1,7 +1,9 @@
 from math import floor
 from utils import is_power_of_two
 from pathlib import Path
-from model import LightweightGAN
+from model import init_GAN
+from accelerate import Accelerator
+from torch.optim import Adam
 
 
 class Trainer:
@@ -44,12 +46,12 @@ class Trainer:
 
         self.lr = args.lr
         self.optimizer = args.optimizer
-        self.num_workers = num_workers
-        self.ttur_mult = ttur_mult
+        self.num_workers = args.num_workers
+        self.ttur_mult = args.ttur_mult
         self.batch_size = args.batch_size
         self.gradient_accumulate_every = args.gradient_accumulate_every
 
-        self.gp_weight = gp_weight
+        self.gp_weight = args.gp_weight
 
         self.evaluate_every = args.evaluate_every
         self.save_every = args.save_every
@@ -78,31 +80,30 @@ class Trainer:
         self.calculate_fid_num_images = args.calculate_fid_num_images
         self.clear_fid_cache = args.clear_fid_cache
 
-        # self.is_ddp = is_ddp
-        # self.is_main = rank == 0
-        # self.rank = rank
-        # self.world_size = world_size
-
-        # self.syncbatchnorm = is_ddp
-
-        # self.load_strict = args.load_strict
-
-        # self.amp = amp
-        # self.G_scaler = GradScaler(enabled = self.amp)
-        # self.D_scaler = GradScaler(enabled = self.amp)
-
         self.run = None
         self.hparams = args.hparams
 
-        # if self.is_main and use_aim:
-        #     try:
-        #         import aim
-        #         self.aim = aim
-        #     except ImportError:
-        #         print('unable to import aim experiment tracker - please run `pip install aim` first')
+        self.G, self.D, self.GE = init_GAN(
+            GAN_params = self.GAN_params,
+            latent_dim = self.latent_dim,
+            attn_res_layers = self.attn_res_layers,
+            freq_chan_attn = self.freq_chan_attn,
+            image_size = self.image_size,
+            fmap_max = self.fmap_max,
+            disc_output_size = self.disc_output_size,
+            transparent = self.transparent,
+            greyscale = self.greyscale,
+        )
 
-        #     self.run = self.aim.Run(run_hash=aim_run_hash, repo=aim_repo)
-        #     self.run['hparams'] = hparams
+        if self.optimizer == "adam":
+            self.G_opt = Adam(self.G.parameters(), lr = self.lr, betas=(0.5, 0.9))
+            self.D_opt = Adam(self.D.parameters(), lr = self.lr * self.ttur_mult, betas=(0.5, 0.9))
+        else:
+            assert False, "No valid optimizer is given"
+
+
+        self.acc_Generator = Accelerator(device_placement=True)
+        self.acc_Discriminator = Accelerator(device_placement=True)
 
     @property
     def image_extension(self):
@@ -112,48 +113,3 @@ class Trainer:
     def checkpoint_num(self):
         return floor(self.steps // self.save_every)
     
-    def init_GAN(self):
-        args, kwargs = self.GAN_params
-
-        # set some global variables before instantiating GAN
-
-        # global norm_class
-        global Blur
-
-        # norm_class = nn.SyncBatchNorm if self.syncbatchnorm else nn.BatchNorm2d
-        Blur = nn.Identity if not self.antialias else Blur
-
-        # handle bugs when
-        # switching from multi-gpu back to single gpu
-
-        # if self.syncbatchnorm and not self.is_ddp:
-        #     import torch.distributed as dist
-        #     os.environ['MASTER_ADDR'] = 'localhost'
-        #     os.environ['MASTER_PORT'] = '12355'
-        #     dist.init_process_group('nccl', rank=0, world_size=1)
-
-        # instantiate GAN
-
-        self.GAN = LightweightGAN(
-            optimizer=self.optimizer,
-            lr = self.lr,
-            latent_dim = self.latent_dim,
-            attn_res_layers = self.attn_res_layers,
-            freq_chan_attn = self.freq_chan_attn,
-            image_size = self.image_size,
-            ttur_mult = self.ttur_mult,
-            fmap_max = self.fmap_max,
-            disc_output_size = self.disc_output_size,
-            transparent = self.transparent,
-            greyscale = self.greyscale,
-            antialias = self.antialias
-            *args,
-            **kwargs
-        )
-
-        if self.is_ddp:
-            ddp_kwargs = {'device_ids': [self.rank], 'output_device': self.rank, 'find_unused_parameters': True}
-
-            self.G_ddp = DDP(self.GAN.G, **ddp_kwargs)
-            self.D_ddp = DDP(self.GAN.D, **ddp_kwargs)
-            self.D_aug_ddp = DDP(self.GAN.D_aug, **ddp_kwargs)

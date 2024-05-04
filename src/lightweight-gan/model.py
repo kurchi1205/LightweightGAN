@@ -1,5 +1,4 @@
 from torch import nn, einsum
-from torch.optim import Adam
 from math import log2, floor
 import torch
 import torch.nn.functional as F
@@ -491,7 +490,6 @@ class LightWeightGan(nn.Module):
         *,
         latent_dim,
         image_size,
-        optimizer = "adam",
         fmap_max = 512,
         fmap_inverse_coef = 12,
         transparent = False,
@@ -499,9 +497,7 @@ class LightWeightGan(nn.Module):
         disc_output_size = 5,
         attn_res_layers = [],
         freq_chan_attn = False,
-        ttur_mult = 1.,
-        lr = 2e-4,
-        antialias = False
+        
     ):
         super().__init__()
         self.latent_dim = latent_dim
@@ -534,13 +530,6 @@ class LightWeightGan(nn.Module):
         self.GE = Generator(**G_kwargs)
         set_requires_grad(self.GE, False)
 
-
-        if optimizer == "adam":
-            self.G_opt = Adam(self.G.parameters(), lr = lr, betas=(0.5, 0.9))
-            self.D_opt = Adam(self.D.parameters(), lr = lr * ttur_mult, betas=(0.5, 0.9))
-        else:
-            assert False, "No valid optimizer is given"
-
         self.apply(self._init_weights)
         self.reset_parameter_averaging()
 
@@ -563,3 +552,20 @@ class LightWeightGan(nn.Module):
 
     def reset_parameter_averaging(self):
         self.GE.load_state_dict(self.G.state_dict())
+
+
+def init_GAN(GAN_params, latent_dim, attn_res_layers, freq_chan_attn, image_size, fmap_max, disc_output_size, transparent, greyscale):
+        args, kwargs = GAN_params
+        GAN = LightWeightGan(
+            latent_dim = latent_dim,
+            attn_res_layers = attn_res_layers,
+            freq_chan_attn = freq_chan_attn,
+            image_size = image_size,
+            fmap_max = fmap_max,
+            disc_output_size = disc_output_size,
+            transparent = transparent,
+            greyscale = greyscale,
+            *args,
+            **kwargs
+        )
+        return GAN.G, GAN.D, GAN.GE
