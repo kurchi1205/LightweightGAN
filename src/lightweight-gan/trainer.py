@@ -5,6 +5,7 @@ from model import init_GAN
 from data import get_data
 from accelerate import Accelerator
 from torch.optim import Adam
+from torch.utils.data import DataLoader
 
 
 class Trainer:
@@ -75,7 +76,7 @@ class Trainer:
         self.init_folders()
 
         self.loader = None
-        self.dataset_aug_prob = dataset_aug_prob
+        # self.dataset_aug_prob = dataset_aug_prob
 
         self.calculate_fid_every = args.calculate_fid_every
         self.calculate_fid_num_images = args.calculate_fid_num_images
@@ -84,7 +85,11 @@ class Trainer:
         self.run = None
         self.hparams = args.hparams
 
-        train_dataset, val_dataset, test_dataset = get_data(self.image_size, self.aug_prob)
+        self.train_dataset, self.val_dataset, self.test_dataset = get_data(self.image_size, self.aug_prob)
+        self.train_loader = DataLoader(self.train_dataset, num_workers = num_workers, batch_size = self.batch_size, shuffle = True, drop_last = True, pin_memory = True)
+        self.val_loader = DataLoader(self.val_dataset, num_workers = num_workers, batch_size = self.batch_size, shuffle = False, drop_last = True, pin_memory = True)
+        self.test_loader = DataLoader(self.test_dataset, num_workers = num_workers, batch_size = self.batch_size, shuffle = False, drop_last = True, pin_memory = True)
+        
         
         self.G, self.D, self.GE = init_GAN(
             GAN_params = self.GAN_params,
@@ -108,11 +113,14 @@ class Trainer:
         self.acc_Generator = Accelerator(device_placement=True)
         self.acc_Discriminator = Accelerator(device_placement=True)
 
-    @property
-    def image_extension(self):
-        return 'jpg' if not self.transparent else 'png'
+    # @property
+    # def image_extension(self):
+    #     return 'jpg' if not self.transparent else 'png'
 
     @property
     def checkpoint_num(self):
         return floor(self.steps // self.save_every)
     
+    def train(self):
+        self.G, self.train_loader, self.val_loader, self.test_loader, self.G_opt = self.acc_Generator.prepare(self.G, self.train_loader, self.val_loader, self.test_loader, self.G_opt)
+        

@@ -6,6 +6,8 @@ from kornia.filters import filter2d
 from einops import rearrange, reduce, repeat
 from einops.layers.torch import Rearrange
 from utils import default, is_power_of_two
+from functools import lru_cache, partial
+from random import random
 
 
 def set_requires_grad(model, bool):
@@ -473,6 +475,57 @@ class Discriminator(nn.Module):
 
         self.decoder1 = SimpleDecoder(chan_in = last_chan, chan_out = init_channel)
         self.decoder2 = SimpleDecoder(chan_in = features[-2][-1], chan_out = init_channel) if resolution >= 9 else None
+
+    def forward(self, x, calc_aux_loss = False):
+        orig_img = x
+
+        for layer in self.non_residual_layers:
+            x = layer(x)
+
+        layer_outputs = []
+
+        for (net, attn) in self.residual_layers:
+            if attn is not None:
+                x = attn(x) + x
+
+            x = net(x)
+            layer_outputs.append(x)
+
+        out = self.to_logits(x).flatten(1)
+
+        img_32x32 = F.interpolate(orig_img, size = (32, 32))
+        out_32x32 = self.to_shape_disc_out(img_32x32)
+
+        if not calc_aux_loss:
+            return out, out_32x32, None
+
+        # self-supervised auto-encoding loss
+
+        layer_8x8 = layer_outputs[-1]
+        layer_16x16 = layer_outputs[-2]
+
+        recon_img_8x8 = self.decoder1(layer_8x8)
+
+        aux_loss = F.mse_loss(
+            recon_img_8x8,
+            F.interpolate(orig_img, size = recon_img_8x8.shape[2:])
+        )
+
+        if self.decoder2 is not None:
+            select_random_quadrant = lambda rand_quadrant, img: rearrange(img, 'b c (m h) (n w) -> (m n) b c h w', m = 2, n = 2)[rand_quadrant]
+            crop_image_fn = partial(select_random_quadrant, floor(random() * 4))
+            img_part, layer_16x16_part = map(crop_image_fn, (orig_img, layer_16x16))
+
+            recon_img_16x16 = self.decoder2(layer_16x16_part)
+
+            aux_loss_16x16 = F.mse_loss(
+                recon_img_16x16,
+                F.interpolate(img_part, size = recon_img_16x16.shape[2:])
+            )
+
+            aux_loss = aux_loss + aux_loss_16x16
+
+        return out, out_32x32, aux_loss
 
 
 class EMA():
