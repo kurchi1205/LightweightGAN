@@ -3,9 +3,12 @@ from utils import is_power_of_two
 from pathlib import Path
 from model import init_GAN
 from data import get_data
+from loss import dual_contrastive_loss, hinge_loss
 from accelerate import Accelerator
 from torch.optim import Adam
 from torch.utils.data import DataLoader
+import torch
+import numpy as np
 
 
 class Trainer:
@@ -122,5 +125,67 @@ class Trainer:
         return floor(self.steps // self.save_every)
     
     def train(self):
-        self.G, self.train_loader, self.val_loader, self.test_loader, self.G_opt = self.acc_Generator.prepare(self.G, self.train_loader, self.val_loader, self.test_loader, self.G_opt)
+        self.G, self.D, self.train_loader, self.val_loader, self.test_loader, self.G_opt, self.D_opt = self.acc.prepare(self.G, self.D, self.train_loader, self.val_loader, self.test_loader, self.G_opt, self.D_opt)
+        self.G.train()
+        self.D.train()
+        total_disc_loss = torch.zeros([], device=self.acc.device)
+        total_gen_loss = torch.zeros([], device=self.acc.device)
+        if self.dual_contrast_loss:
+            D_loss_fn = dual_contrastive_loss
+        else:
+            D_loss_fn = hinge_loss
+
+        if self.dual_contrast_loss:
+            G_loss_fn = dual_contrastive_loss
+            G_requires_calc_real = True
+        else:
+            G_loss_fn = hinge_loss
+            G_requires_calc_real = False
+
+        self.D_opt.zero_grad()
+        for iter in range(self.training_iters):
+            with self.acc.accumulate():
+                latents = torch.randn(self.batch_size, self.latent_dim).to(self.G.device)
+                image_batch = next(self.loader)
+                with torch.no_grad():
+                    generated_images = self.G(latents)
+                generated_images = generated_images.to(self.D.device)
+                fake_output, fake_output_32x32, _ = self.D(generated_images)
+                real_output, real_output_32x32, real_aux_loss = self.D(image_batch,  calc_aux_loss = True)
+
+                real_output_loss = real_output
+                fake_output_loss = fake_output
+
+                divergence = D_loss_fn(real_output_loss, fake_output_loss)
+                divergence_32x32 = D_loss_fn(real_output_32x32, fake_output_32x32)
+                disc_loss = divergence + divergence_32x32
+
+                aux_loss = real_aux_loss
+                disc_loss = disc_loss + aux_loss
+                self.D_opt.step()
+            total_disc_loss += divergence
+        self.d_loss = float(total_disc_loss.item())
         
+        self.G_opt.zero_grad()
+        for iter in range(self.training_iters):
+            latents = torch.randn(self.batch_size, self.latent_dim).to(self.G.device)
+            with self.acc.accumulate():
+                if G_requires_calc_real:
+                    image_batch = next(self.loader)
+                    generated_images = self.G(latents)
+                    generated_images = generated_images.to(self.D.device)
+
+                    fake_output, fake_output_32x32, _ = self.D(generated_images)
+                    real_output, real_output_32x32, real_aux_loss = self.D(image_batch,  calc_aux_loss = True)
+
+                    loss = G_loss_fn(fake_output, real_output)
+                    loss_32x32 = G_loss_fn(fake_output_32x32, real_output_32x32)
+
+                    gen_loss = loss + loss_32x32
+                gen_loss.backward()
+                self.G_opt.step()
+            total_gen_loss += loss
+        self.g_loss = float(total_gen_loss.item())
+
+
+
