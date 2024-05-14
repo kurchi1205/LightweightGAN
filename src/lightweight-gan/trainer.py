@@ -195,7 +195,13 @@ class Trainer:
         self.d_loss = float(total_disc_loss.item())
         self.g_loss = float(total_gen_loss.item())
 
-        
+
+    def validate(self, loader):
+        for iter, image_batch in enumerate(loader):
+            with torch.no_grad():
+                latents = torch.randn(self.batch_size, self.latent_dim).to(self.G.device)
+                generated_images = self.G(latents)
+                
 
 
 
