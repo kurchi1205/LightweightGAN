@@ -94,7 +94,7 @@ class Trainer:
         self.test_loader = DataLoader(self.test_dataset, num_workers = num_workers, batch_size = self.batch_size, shuffle = False, drop_last = True, pin_memory = True)
         
         
-        self.G, self.D, self.GE = init_GAN(
+        self.GAN = init_GAN(
             GAN_params = self.GAN_params,
             latent_dim = self.latent_dim,
             attn_res_layers = self.attn_res_layers,
@@ -105,6 +105,9 @@ class Trainer:
             transparent = self.transparent,
             greyscale = self.greyscale,
         )
+        self.G = self.GAN.G
+        self.D = self.GAN.D
+        self.GE = self.GAN.GE
 
         if self.optimizer == "adam":
             self.G_opt = Adam(self.G.parameters(), lr = self.lr, betas=(0.5, 0.9))
@@ -143,9 +146,10 @@ class Trainer:
             G_requires_calc_real = False
 
         self.D_opt.zero_grad()
+        self.G_opt.zero_grad()
         for iter in range(self.training_iters):
+            latents = torch.randn(self.batch_size, self.latent_dim).to(self.G.device)
             with self.acc.accumulate():
-                latents = torch.randn(self.batch_size, self.latent_dim).to(self.G.device)
                 image_batch = next(self.loader)
                 with torch.no_grad():
                     generated_images = self.G(latents)
@@ -162,16 +166,10 @@ class Trainer:
 
                 aux_loss = real_aux_loss
                 disc_loss = disc_loss + aux_loss
+                disc_loss.backward()
                 self.D_opt.step()
-            total_disc_loss += divergence
-        self.d_loss = float(total_disc_loss.item())
-        
-        self.G_opt.zero_grad()
-        for iter in range(self.training_iters):
-            latents = torch.randn(self.batch_size, self.latent_dim).to(self.G.device)
-            with self.acc.accumulate():
+
                 if G_requires_calc_real:
-                    image_batch = next(self.loader)
                     generated_images = self.G(latents)
                     generated_images = generated_images.to(self.D.device)
 
@@ -182,10 +180,24 @@ class Trainer:
                     loss_32x32 = G_loss_fn(fake_output_32x32, real_output_32x32)
 
                     gen_loss = loss + loss_32x32
-                gen_loss.backward()
-                self.G_opt.step()
+                    gen_loss.backward()
+                    self.G_opt.step()
+
+            total_disc_loss += divergence
             total_gen_loss += loss
+
+            if iter % 10 == 0 and iter > 20000:
+                self.GAN.EMA()
+
+            if iter <= 25000 and iter % 1000 == 0:
+                self.GAN.reset_parameter_averaging()
+
+        self.d_loss = float(total_disc_loss.item())
         self.g_loss = float(total_gen_loss.item())
+
+        
+
+
 
 
 
