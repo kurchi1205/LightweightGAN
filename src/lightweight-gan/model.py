@@ -621,4 +621,4 @@ def init_GAN(GAN_params, latent_dim, attn_res_layers, freq_chan_attn, image_size
             *args,
             **kwargs
         )
-        return GAN.G, GAN.D, GAN.GE
+        return GAN
