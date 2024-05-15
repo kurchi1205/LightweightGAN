@@ -4,6 +4,7 @@ from pathlib import Path
 from model import init_GAN
 from data import get_data
 from loss import dual_contrastive_loss, hinge_loss
+from metrics import calculate_fid_given_images
 from accelerate import Accelerator
 from torch.optim import Adam
 from torch.utils.data import DataLoader
@@ -201,6 +202,8 @@ class Trainer:
             with torch.no_grad():
                 latents = torch.randn(self.batch_size, self.latent_dim).to(self.G.device)
                 generated_images = self.G(latents)
+            fid_score = calculate_fid_given_images(generated_images, image_batch, self.batch_size, "cuda")
+            
                 
 
 

@@ -34,7 +34,7 @@ def calculate_activation_statistics(image_batch, model, batch_size=50, dims=2048
     return mu, sigma
 
 
-def calculate_fid_given_images(generated_images, real_images, batch_size, device, dims, num_workers=1):
+def calculate_fid_given_images(generated_images, real_images, batch_size, device, dims=2048, num_workers=1):
     mu_gen, sigma_gen = calculate_activation_statistics(generated_images, batch_size, dims, device, num_workers)
     mu_real, sigma_real = calculate_activation_statistics(real_images, batch_size, dims, device, num_workers)
     return calculate_frechet_distance(mu_gen, sigma_gen, mu_real, sigma_real)
