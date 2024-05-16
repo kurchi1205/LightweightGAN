@@ -550,7 +550,6 @@ class LightWeightGan(nn.Module):
         disc_output_size = 5,
         attn_res_layers = [],
         freq_chan_attn = False,
-        
     ):
         super().__init__()
         self.latent_dim = latent_dim
@@ -607,8 +606,7 @@ class LightWeightGan(nn.Module):
         self.GE.load_state_dict(self.G.state_dict())
 
 
-def init_GAN(GAN_params, latent_dim, attn_res_layers, freq_chan_attn, image_size, fmap_max, disc_output_size, transparent, greyscale):
-        args, kwargs = GAN_params
+def init_GAN(latent_dim, attn_res_layers, freq_chan_attn, image_size, fmap_max, disc_output_size, transparent, greyscale):
         GAN = LightWeightGan(
             latent_dim = latent_dim,
             attn_res_layers = attn_res_layers,
@@ -618,7 +616,5 @@ def init_GAN(GAN_params, latent_dim, attn_res_layers, freq_chan_attn, image_size
             disc_output_size = disc_output_size,
             transparent = transparent,
             greyscale = greyscale,
-            *args,
-            **kwargs
         )
         return GAN
