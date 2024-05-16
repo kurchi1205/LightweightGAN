@@ -1,5 +1,5 @@
 from math import floor
-from utils import is_power_of_two
+from utils import is_power_of_two, image_to_pil
 from pathlib import Path
 from model import init_GAN
 from data import get_data
@@ -10,7 +10,6 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 import torch
 import numpy as np
-
 
 class Trainer:
     def __init__(
@@ -193,17 +192,25 @@ class Trainer:
             if iter <= 25000 and iter % 1000 == 0:
                 self.GAN.reset_parameter_averaging()
 
+            if iter % 10 == 0:
+                self.validate(self.val_loader, iter)
+
         self.d_loss = float(total_disc_loss.item())
         self.g_loss = float(total_gen_loss.item())
 
 
-    def validate(self, loader):
+    def validate(self, loader, step):
         for iter, image_batch in enumerate(loader):
             with torch.no_grad():
                 latents = torch.randn(self.batch_size, self.latent_dim).to(self.G.device)
                 generated_images = self.G(latents)
             fid_score = calculate_fid_given_images(generated_images, image_batch, self.batch_size, "cuda")
-            
+            pil_generated_images = [image_to_pil(image) for image in generated_images]
+            pil_true_images = [image_to_pil(image) for image in image_batch]
+            if iter == 1:
+                break
+
+        
                 
 
 
