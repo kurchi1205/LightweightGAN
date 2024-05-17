@@ -173,7 +173,7 @@ class Trainer:
             total_disc_loss += divergence
             total_gen_loss += loss
 
-            if iter % self.checkpoint_every == 0 and iter > 20000:
+            if iter % 10 == 0 and iter > 20000:
                 self.GAN.EMA()
 
             if iter <= 25000 and iter % 1000 == 0:
@@ -181,6 +181,13 @@ class Trainer:
 
             if iter % self.evaluate_every == 0:
                 self.validate(self.val_loader, iter)
+
+            if iter % self.checkpoint_every == 0:
+                save_data = {
+                    'GAN': self.GAN.state_dict(),
+                }
+                num = iter / self.checkpoint_every
+                torch.save(save_data, str(self.models_dir / self.name / f'model_{num}.pt'))
 
         self.d_loss = float(total_disc_loss.item())
         self.g_loss = float(total_gen_loss.item())
