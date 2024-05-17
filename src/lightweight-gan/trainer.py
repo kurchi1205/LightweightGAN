@@ -10,15 +10,18 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 import torch
 import numpy as np
+import datetime
+import wandb
+wandb.login()
 
 class Trainer:
     def __init__(
         self,
         args = None,
     ):
+        
         self.GAN = None
         self.name = args.name
-
         base_dir = '/'
         self.base_dir = base_dir
         self.models_dir = base_dir / args.models_dir
@@ -85,7 +88,18 @@ class Trainer:
         self.val_loader = DataLoader(self.val_dataset, num_workers = self.num_workers, batch_size = self.batch_size, shuffle = False, drop_last = True, pin_memory = True)
         self.test_loader = DataLoader(self.test_dataset, num_workers = self.num_workers, batch_size = self.batch_size, shuffle = False, drop_last = True, pin_memory = True)
         
-        
+        current_datetime = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        wandb.init(
+            project = 'lightweight-gan',
+            name = self.name + '_' + current_datetime,
+            config = {
+                "image_size": self.image_size,
+                "lr": self.lr,
+                "optimizer": self.optimizer,
+                "batch_size": self.batch_size,
+                "total_steps": self.training_iters
+            }
+        )
         self.GAN = init_GAN(
             latent_dim = self.latent_dim,
             attn_res_layers = self.attn_res_layers,
@@ -173,6 +187,8 @@ class Trainer:
             total_disc_loss += divergence
             total_gen_loss += loss
 
+            wandb.log({"Generator loss": total_gen_loss, "Discriminator loss": total_disc_loss}, step=iter)
+
             if iter % 10 == 0 and iter > 20000:
                 self.GAN.EMA()
 
@@ -194,6 +210,7 @@ class Trainer:
 
 
     def validate(self, loader, step):
+        self.G.eval()
         for iter, image_batch in enumerate(loader):
             with torch.no_grad():
                 latents = torch.randn(self.batch_size, self.latent_dim).to(self.G.device)
@@ -201,7 +218,10 @@ class Trainer:
             fid_score = calculate_fid_given_images(generated_images, image_batch, self.batch_size, "cuda")
             pil_generated_images = [image_to_pil(image) for image in generated_images]
             pil_true_images = [image_to_pil(image) for image in image_batch]
-            if iter == 1:
+            wandb.log({"FID score": fid_score}, step=step)
+            wandb.log({"Generated images": [wandb.Image(image) for image in pil_generated_images], "True images": [wandb.Image(image) for image in pil_true_images]}, step=step)
+            step += 1
+            if iter == self.calculate_fid_num_images - 1:
                 break
 
         
