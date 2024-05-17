@@ -1,0 +1,1 @@
+accelerate launch --config accelerate_configs/accelerate_single_gpu_yaml run_train.py --aug_prob 0.6
