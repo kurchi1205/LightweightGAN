@@ -150,7 +150,7 @@ class Trainer:
         self.G_opt.zero_grad()
         for iter in range(self.training_iters):
             latents = torch.randn(self.batch_size, self.latent_dim).to(self.G.device)
-            with self.acc.accumulate():
+            with self.acc.accumulate(gradient_accumulation=self.gradient_accumulate_every):
                 image_batch = next(self.loader)
                 with torch.no_grad():
                     generated_images = self.G(latents)
