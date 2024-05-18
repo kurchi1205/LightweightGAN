@@ -1,5 +1,5 @@
 from math import floor
-from utils import is_power_of_two, image_to_pil
+from utils import is_power_of_two, image_to_pil, init_folders
 from pathlib import Path
 from model import init_GAN
 from data import get_data
@@ -22,7 +22,8 @@ class Trainer:
         
         self.GAN = None
         self.name = args.name
-        base_dir = '/'
+        self.data_name = args.data
+        base_dir = '.'
         self.base_dir = base_dir
         self.models_dir = f"{base_dir}/{args.models_dir}"
         self.fid_dir = f"{base_dir}/'fid'/{self.name}"
@@ -45,11 +46,9 @@ class Trainer:
         assert (int(self.transparent) + int(self.greyscale)) < 2, 'you can only set either transparency or greyscale'
 
         self.aug_prob = args.aug_prob
-        # self.aug_types = args.aug_types
 
         self.lr = args.lr
         self.ttur_mult = args.ttur_mult
-        # self.gp_weight = args.gp_weight
         
         self.optimizer = args.optimizer
         self.num_workers = args.num_workers
@@ -64,7 +63,6 @@ class Trainer:
         self.attn_res_layers = args.attn_res_layers
         self.freq_chan_attn = args.freq_chan_attn # default values has to be found
         self.disc_output_size = args.disc_output_size
-        # self.antialias = args.antialias
 
 
         self.d_loss = 0
@@ -73,18 +71,15 @@ class Trainer:
         self.last_recon_loss = None
         self.last_fid = None
 
-        self.init_folders()
+        init_folders(self.models_dir)
 
         self.loader = None
-        # self.dataset_aug_prob = dataset_aug_prob
 
         self.calculate_fid_num_images = args.calculate_fid_num_images
-        # self.clear_fid_cache = args.clear_fid_cache
 
         self.run = None
-        self.hparams = args.hparams
 
-        self.train_dataset, self.val_dataset, self.test_dataset = get_data(self.image_size, self.aug_prob)
+        self.train_dataset, self.val_dataset, self.test_dataset = get_data(self.data_name, self.image_size, self.aug_prob)
         self.train_loader = DataLoader(self.train_dataset, num_workers = self.num_workers, batch_size = self.batch_size, shuffle = True, drop_last = True, pin_memory = True)
         self.val_loader = DataLoader(self.val_dataset, num_workers = self.num_workers, batch_size = self.val_batch_size, shuffle = False, drop_last = True, pin_memory = True)
         self.test_loader = DataLoader(self.test_dataset, num_workers = self.num_workers, batch_size = self.val_batch_size, shuffle = False, drop_last = True, pin_memory = True)
@@ -122,7 +117,7 @@ class Trainer:
             assert False, "No valid optimizer is given"
 
 
-        self.acc = Accelerator(device_placement=True)
+        self.acc = Accelerator(device_placement=True, gradient_accumulation_steps=self.gradient_accumulate_every)
 
 
     @property
@@ -150,43 +145,43 @@ class Trainer:
         self.D_opt.zero_grad()
         self.G_opt.zero_grad()
         for iter in range(self.training_iters):
-            latents = torch.randn(self.batch_size, self.latent_dim).to(self.G.device)
-            with self.acc.accumulate(gradient_accumulation=self.gradient_accumulate_every):
-                image_batch = next(self.loader)
-                with torch.no_grad():
-                    generated_images = self.G(latents)
-                generated_images = generated_images.to(self.D.device)
-                fake_output, fake_output_32x32, _ = self.D(generated_images)
-                real_output, real_output_32x32, real_aux_loss = self.D(image_batch,  calc_aux_loss = True)
-
-                real_output_loss = real_output
-                fake_output_loss = fake_output
-
-                divergence = D_loss_fn(real_output_loss, fake_output_loss)
-                divergence_32x32 = D_loss_fn(real_output_32x32, fake_output_32x32)
-                disc_loss = divergence + divergence_32x32
-
-                aux_loss = real_aux_loss
-                disc_loss = disc_loss + aux_loss
-                disc_loss.backward()
-                self.D_opt.step()
-
-                if G_requires_calc_real:
-                    generated_images = self.G(latents)
-                    generated_images = generated_images.to(self.D.device)
-
+            latents = torch.randn(self.batch_size, self.latent_dim).to(self.acc.device)
+            for image_batch in self.train_loader: 
+                with self.acc.accumulate():
+                    with torch.no_grad():
+                        generated_images = self.G(latents)
+                    generated_images = generated_images.to(self.acc.device)
                     fake_output, fake_output_32x32, _ = self.D(generated_images)
                     real_output, real_output_32x32, real_aux_loss = self.D(image_batch,  calc_aux_loss = True)
 
-                    loss = G_loss_fn(fake_output, real_output)
-                    loss_32x32 = G_loss_fn(fake_output_32x32, real_output_32x32)
+                    real_output_loss = real_output
+                    fake_output_loss = fake_output
 
-                    gen_loss = loss + loss_32x32
-                    gen_loss.backward()
-                    self.G_opt.step()
+                    divergence = D_loss_fn(real_output_loss, fake_output_loss)
+                    divergence_32x32 = D_loss_fn(real_output_32x32, fake_output_32x32)
+                    disc_loss = divergence + divergence_32x32
 
-            total_disc_loss += divergence
-            total_gen_loss += loss
+                    aux_loss = real_aux_loss
+                    disc_loss = disc_loss + aux_loss
+                    self.acc.backward(disc_loss)
+                    self.D_opt.step()
+
+                    if G_requires_calc_real:
+                        generated_images = self.G(latents)
+                        generated_images = generated_images.to(self.D.device)
+
+                        fake_output, fake_output_32x32, _ = self.D(generated_images)
+                        real_output, real_output_32x32, real_aux_loss = self.D(image_batch,  calc_aux_loss = True)
+
+                        loss = G_loss_fn(fake_output, real_output)
+                        loss_32x32 = G_loss_fn(fake_output_32x32, real_output_32x32)
+
+                        gen_loss = loss + loss_32x32
+                        self.acc.backward(gen_loss)
+                        self.G_opt.step()
+
+                total_disc_loss += divergence
+                total_gen_loss += loss
 
             wandb.log({"Generator loss": total_gen_loss, "Discriminator loss": total_disc_loss}, step=iter)
 

@@ -6,6 +6,7 @@ from functools import lru_cache, partial
 from PIL import Image
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+import numpy as np
 
 def resize_to_minimum_size(min_size, image):
     if max(*image.size) < min_size:
@@ -38,22 +39,22 @@ class ImageDataset(Dataset):
     ):
         super().__init__()
         self.data = data
-        dataset = dataset.shuffle(seed=42)
-
+        if isinstance(image_size, int):
+            image_size = (image_size, image_size)
         self.transform = A.Compose([
-            A.Lambda(image=partial(resize_to_minimum_size, size=image_size)),
             A.Resize(height=image_size[0], width=image_size[1]),
-            A.RandomApply([A.HorizontalFlip()], p=aug_prob),
+            A.HorizontalFlip(p=0.5),
             A.CoarseDropout(p=0.5, max_holes=8, max_height=16, max_width=16, min_holes=1, min_height=8, min_width=8),
             ToTensorV2(),
         ])
 
     def __len__(self):
-        return len(self.paths)
+        return len(self.data)
 
     def __getitem__(self, index):
-        img = self.data.image[index]
-        return self.transform(img)
+        img = self.data[index]["image"]
+        img = np.array(img)
+        return self.transform(image=img)
     
 
 def get_data(data_name, image_size, aug_prob):
