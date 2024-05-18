@@ -44,7 +44,6 @@ class ImageDataset(Dataset):
             A.Resize(height=image_size[0], width=image_size[1]),
             A.RandomApply([A.HorizontalFlip()], p=aug_prob),
             A.CoarseDropout(p=0.5, max_holes=8, max_height=16, max_width=16, min_holes=1, min_height=8, min_width=8),
-            A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
             ToTensorV2(),
         ])
 
