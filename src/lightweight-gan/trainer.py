@@ -153,6 +153,8 @@ class Trainer:
         with tqdm(total=self.training_iters, desc="Training") as pbar:
             for iter in range(self.training_iters):
                 latents = torch.randn(self.batch_size, self.latent_dim).to(self.acc.device)
+                disc_loss_list = []
+                gen_loss_list = []
                 for image_batch in tqdm(self.train_loader): 
                     real_images = image_batch["image"]
                     with self.acc.accumulate():
@@ -171,13 +173,14 @@ class Trainer:
 
                         aux_loss = real_aux_loss
                         disc_loss = disc_loss + aux_loss
+                        disc_loss_list.append(disc_loss.item())
                         self.acc.backward(disc_loss)
                         self.D_opt.step()
                         total_disc_loss += divergence
 
                         if G_requires_calc_real:
                             generated_images = self.G(latents)
-                            generated_images = generated_images.to(self.D.device)
+                            generated_images = generated_images.to(self.acc.device)
 
                             fake_output, fake_output_32x32, _ = self.D(generated_images)
                             real_output, real_output_32x32, real_aux_loss = self.D(real_images,  calc_aux_loss = True)
@@ -186,12 +189,12 @@ class Trainer:
                             loss_32x32 = G_loss_fn(fake_output_32x32, real_output_32x32)
 
                             gen_loss = loss + loss_32x32
+                            gen_loss_list.append(gen_loss.item())
                             self.acc.backward(gen_loss)
                             self.G_opt.step()
                             total_gen_loss += loss
-
-                logger.info(f"[Iter {iter+1}/{self.training_iters}]    Discriminator loss: {total_disc_loss}, Generator loss: {total_gen_loss}")
-                wandb.log({"Generator loss": total_gen_loss, "Discriminator loss": total_disc_loss}, step=iter)
+                logger.info(f"[Iter {iter+1}/{self.training_iters}]    Discriminator loss: {np.mean(disc_loss_list)}, Generator loss: {np.mean(gen_loss_list)}")
+                wandb.log({"Generator loss": np.mean(gen_loss_list), "Discriminator loss": np.mean(disc_loss_list)}, step=iter)
 
                 if iter % 10 == 0 and iter > 20000:
                     self.GAN.EMA()
@@ -203,13 +206,13 @@ class Trainer:
                     logger.info("Validating")
                     self.validate(self.val_loader, iter)
 
-                if iter % self.checkpoint_every == 0:
-                    logger.info("Saving model")
-                    save_data = {
-                        'GAN': self.GAN.state_dict(),
-                    }
-                    num = iter / self.checkpoint_every
-                    torch.save(save_data, str(self.models_dir / self.name / f'model_{num}.pt'))
+                # if iter % self.checkpoint_every == 0:
+                #     logger.info("Saving model")
+                #     save_data = {
+                #         'GAN': self.GAN.state_dict(),
+                #     }
+                #     num = iter / self.checkpoint_every
+                #     torch.save(save_data, str(self.models_dir / self.name / f'model_{num}.pt'))
 
         self.d_loss = float(total_disc_loss.item())
         self.g_loss = float(total_gen_loss.item())
@@ -218,12 +221,13 @@ class Trainer:
     def validate(self, loader, step):
         self.G.eval()
         for iter, image_batch in enumerate(loader):
+            real_images = image_batch["image"]
             with torch.no_grad():
-                latents = torch.randn(self.batch_size, self.latent_dim).to(self.acc.device)
+                latents = torch.randn(self.val_batch_size, self.latent_dim).to(self.acc.device)
                 generated_images = self.G(latents)
             fid_score = calculate_fid_given_images(generated_images, image_batch, self.batch_size, "cuda")
             pil_generated_images = [image_to_pil(image) for image in generated_images]
-            pil_true_images = [image_to_pil(image) for image in image_batch]
+            pil_true_images = [image_to_pil(image) for image in real_images]
             wandb.log({"FID score": fid_score}, step=step)
             wandb.log({"Generated images": [wandb.Image(image) for image in pil_generated_images], "True images": [wandb.Image(image) for image in pil_true_images]}, step=step)
             step += 1

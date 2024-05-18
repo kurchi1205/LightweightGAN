@@ -14,7 +14,7 @@ def default(val, d):
 
 
 def image_to_pil(image):
-    ndarr = image.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to('cpu', torch.uint8).numpy()
+    ndarr = image.add_(0.5).mul(255).clamp_(0, 255).permute(1, 2, 0).to('cpu', torch.uint8).numpy()
     im = Image.fromarray(ndarr)
     return im
 

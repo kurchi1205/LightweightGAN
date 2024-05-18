@@ -44,7 +44,7 @@ class ImageDataset(Dataset):
         self.transform = A.Compose([
             A.Resize(height=image_size[0], width=image_size[1]),
             A.HorizontalFlip(p=0.5),
-            A.CoarseDropout(p=0.5, max_holes=8, max_height=16, max_width=16, min_holes=1, min_height=8, min_width=8),
+            A.CoarseDropout(p=0.0, max_holes=8, max_height=16, max_width=16, min_holes=1, min_height=8, min_width=8),
             ToTensorV2(),
         ])
 
