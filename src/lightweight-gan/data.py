@@ -14,11 +14,11 @@ def resize_to_minimum_size(min_size, image):
     return image
 
 
-def load_data(data_name):
+def load_data(data_name, sample=None):
     # "julianmoraes/doodles-captions-BLIP"
     dataset = load_dataset(data_name, split="train")
     dataset = dataset.shuffle(seed=42)
-
+    dataset = dataset.select(range(sample))
     train_size = int(len(dataset) * 0.8)
     test_size = int(len(dataset) * 0.1)
 
@@ -35,7 +35,7 @@ class ImageDataset(Dataset):
         image_size,
         transparent = False,
         greyscale = False,
-        aug_prob = 0.
+        aug_prob = 0.5,
     ):
         super().__init__()
         self.data = data
@@ -58,8 +58,8 @@ class ImageDataset(Dataset):
         return self.transform(image=img)
     
 
-def get_data(data_name, image_size, aug_prob):
-    train, test, val = load_data(data_name)
+def get_data(data_name, image_size, aug_prob, sample=None):
+    train, test, val = load_data(data_name, sample)
 
     if aug_prob is None and len(train) < 1e5:
         aug_prob = min(0.5, (1e5 - len(train)) * 3e-6)

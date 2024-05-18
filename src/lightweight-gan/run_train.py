@@ -5,6 +5,7 @@ def run_train():
     parser = ArgumentParser()
     parser.add_argument('--name', type = str, default = 'default')
     parser.add_argument('--data', type = str, default = 'imagenet2012')
+    parser.add_argument('--sample', type = int, default = None)
     parser.add_argument('--models_dir', type = str, default = 'models')
     parser.add_argument('--image_size', type = int, default = 128)
     parser.add_argument('--attn_res_layers', type = list, default = [])

@@ -15,7 +15,7 @@ import wandb
 import logging
 from tqdm import tqdm
 
-wandb.login()
+# wandb.login()
 logger = logging.getLogger(__name__)
 class Trainer:
     def __init__(
@@ -82,7 +82,7 @@ class Trainer:
 
         self.run = None
         logger.info("Loading data")
-        self.train_dataset, self.val_dataset, self.test_dataset = get_data(self.data_name, self.image_size, self.aug_prob)
+        self.train_dataset, self.val_dataset, self.test_dataset = get_data(self.data_name, self.image_size, self.aug_prob, args.sample)
         self.train_loader = DataLoader(self.train_dataset, num_workers = self.num_workers, batch_size = self.batch_size, shuffle = True, drop_last = True, pin_memory = True)
         self.val_loader = DataLoader(self.val_dataset, num_workers = self.num_workers, batch_size = self.val_batch_size, shuffle = False, drop_last = True, pin_memory = True)
         self.test_loader = DataLoader(self.test_dataset, num_workers = self.num_workers, batch_size = self.val_batch_size, shuffle = False, drop_last = True, pin_memory = True)
@@ -219,7 +219,7 @@ class Trainer:
         self.G.eval()
         for iter, image_batch in enumerate(loader):
             with torch.no_grad():
-                latents = torch.randn(self.batch_size, self.latent_dim).to(self.G.device)
+                latents = torch.randn(self.batch_size, self.latent_dim).to(self.acc.device)
                 generated_images = self.G(latents)
             fid_score = calculate_fid_given_images(generated_images, image_batch, self.batch_size, "cuda")
             pil_generated_images = [image_to_pil(image) for image in generated_images]
