@@ -9,4 +9,4 @@ main_training_function: main
 mixed_precision: NO
 num_machines: 1
 num_processes: 1
-use_cpu: false
+use_cpu: true
