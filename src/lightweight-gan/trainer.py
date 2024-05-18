@@ -12,8 +12,11 @@ import torch
 import numpy as np
 import datetime
 import wandb
-wandb.login()
+import logging
+from tqdm import tqdm
 
+wandb.login()
+logger = logging.getLogger(__name__)
 class Trainer:
     def __init__(
         self,
@@ -35,9 +38,8 @@ class Trainer:
 
         self.dual_contrast_loss = args.dual_contrast_loss
         assert not (args.dual_contrast_loss and args.disc_output_size > 1), 'discriminator output size cannot be greater than 1 if using dual contrastive loss'
-
+        logger.info("Setting image specifications")
         self.image_size = args.image_size
-        # self.num_image_tiles = args.num_image_tiles
         self.latent_dim = args.latent_dim
         self.fmap_max = args.fmap_max
         self.transparent = args.transparent
@@ -47,9 +49,10 @@ class Trainer:
 
         self.aug_prob = args.aug_prob
 
-        self.lr = args.lr
         self.ttur_mult = args.ttur_mult
-        
+
+        logger.info("Setting training specifications")
+        self.lr = args.lr
         self.optimizer = args.optimizer
         self.num_workers = args.num_workers
         self.batch_size = args.batch_size
@@ -78,12 +81,13 @@ class Trainer:
         self.calculate_fid_num_images = args.calculate_fid_num_images
 
         self.run = None
-
+        logger.info("Loading data")
         self.train_dataset, self.val_dataset, self.test_dataset = get_data(self.data_name, self.image_size, self.aug_prob)
         self.train_loader = DataLoader(self.train_dataset, num_workers = self.num_workers, batch_size = self.batch_size, shuffle = True, drop_last = True, pin_memory = True)
         self.val_loader = DataLoader(self.val_dataset, num_workers = self.num_workers, batch_size = self.val_batch_size, shuffle = False, drop_last = True, pin_memory = True)
         self.test_loader = DataLoader(self.test_dataset, num_workers = self.num_workers, batch_size = self.val_batch_size, shuffle = False, drop_last = True, pin_memory = True)
         
+
         current_datetime = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         wandb.init(
             project = 'lightweight-gan',
@@ -96,6 +100,8 @@ class Trainer:
                 "total_steps": self.training_iters
             }
         )
+
+        logger.info("Initializing model")
         self.GAN = init_GAN(
             latent_dim = self.latent_dim,
             attn_res_layers = self.attn_res_layers,
@@ -144,62 +150,66 @@ class Trainer:
 
         self.D_opt.zero_grad()
         self.G_opt.zero_grad()
-        for iter in range(self.training_iters):
-            latents = torch.randn(self.batch_size, self.latent_dim).to(self.acc.device)
-            for image_batch in self.train_loader: 
-                with self.acc.accumulate():
-                    with torch.no_grad():
-                        generated_images = self.G(latents)
-                    generated_images = generated_images.to(self.acc.device)
-                    fake_output, fake_output_32x32, _ = self.D(generated_images)
-                    real_output, real_output_32x32, real_aux_loss = self.D(image_batch,  calc_aux_loss = True)
-
-                    real_output_loss = real_output
-                    fake_output_loss = fake_output
-
-                    divergence = D_loss_fn(real_output_loss, fake_output_loss)
-                    divergence_32x32 = D_loss_fn(real_output_32x32, fake_output_32x32)
-                    disc_loss = divergence + divergence_32x32
-
-                    aux_loss = real_aux_loss
-                    disc_loss = disc_loss + aux_loss
-                    self.acc.backward(disc_loss)
-                    self.D_opt.step()
-
-                    if G_requires_calc_real:
-                        generated_images = self.G(latents)
-                        generated_images = generated_images.to(self.D.device)
-
+        with tqdm(total=self.training_iters, desc="Training") as pbar:
+            for iter in range(self.training_iters):
+                latents = torch.randn(self.batch_size, self.latent_dim).to(self.acc.device)
+                for image_batch in tqdm(self.train_loader): 
+                    real_images = image_batch["image"]
+                    with self.acc.accumulate():
+                        with torch.no_grad():
+                            generated_images = self.G(latents)
+                        generated_images = generated_images.to(self.acc.device)
                         fake_output, fake_output_32x32, _ = self.D(generated_images)
-                        real_output, real_output_32x32, real_aux_loss = self.D(image_batch,  calc_aux_loss = True)
+                        real_output, real_output_32x32, real_aux_loss = self.D(real_images,  calc_aux_loss = True)
 
-                        loss = G_loss_fn(fake_output, real_output)
-                        loss_32x32 = G_loss_fn(fake_output_32x32, real_output_32x32)
+                        real_output_loss = real_output
+                        fake_output_loss = fake_output
 
-                        gen_loss = loss + loss_32x32
-                        self.acc.backward(gen_loss)
-                        self.G_opt.step()
+                        divergence = D_loss_fn(real_output_loss, fake_output_loss)
+                        divergence_32x32 = D_loss_fn(real_output_32x32, fake_output_32x32)
+                        disc_loss = divergence + divergence_32x32
 
-                total_disc_loss += divergence
-                total_gen_loss += loss
+                        aux_loss = real_aux_loss
+                        disc_loss = disc_loss + aux_loss
+                        self.acc.backward(disc_loss)
+                        self.D_opt.step()
+                        total_disc_loss += divergence
 
-            wandb.log({"Generator loss": total_gen_loss, "Discriminator loss": total_disc_loss}, step=iter)
+                        if G_requires_calc_real:
+                            generated_images = self.G(latents)
+                            generated_images = generated_images.to(self.D.device)
 
-            if iter % 10 == 0 and iter > 20000:
-                self.GAN.EMA()
+                            fake_output, fake_output_32x32, _ = self.D(generated_images)
+                            real_output, real_output_32x32, real_aux_loss = self.D(real_images,  calc_aux_loss = True)
 
-            if iter <= 25000 and iter % 1000 == 0:
-                self.GAN.reset_parameter_averaging()
+                            loss = G_loss_fn(fake_output, real_output)
+                            loss_32x32 = G_loss_fn(fake_output_32x32, real_output_32x32)
 
-            if iter % self.evaluate_every == 0:
-                self.validate(self.val_loader, iter)
+                            gen_loss = loss + loss_32x32
+                            self.acc.backward(gen_loss)
+                            self.G_opt.step()
+                            total_gen_loss += loss
 
-            if iter % self.checkpoint_every == 0:
-                save_data = {
-                    'GAN': self.GAN.state_dict(),
-                }
-                num = iter / self.checkpoint_every
-                torch.save(save_data, str(self.models_dir / self.name / f'model_{num}.pt'))
+                logger.info(f"[Iter {iter+1}/{self.training_iters}]    Discriminator loss: {total_disc_loss}, Generator loss: {total_gen_loss}")
+                wandb.log({"Generator loss": total_gen_loss, "Discriminator loss": total_disc_loss}, step=iter)
+
+                if iter % 10 == 0 and iter > 20000:
+                    self.GAN.EMA()
+
+                if iter <= 25000 and iter % 1000 == 0:
+                    self.GAN.reset_parameter_averaging()
+
+                if iter % self.evaluate_every == 0:
+                    logger.info("Validating")
+                    self.validate(self.val_loader, iter)
+
+                if iter % self.checkpoint_every == 0:
+                    logger.info("Saving model")
+                    save_data = {
+                        'GAN': self.GAN.state_dict(),
+                    }
+                    num = iter / self.checkpoint_every
+                    torch.save(save_data, str(self.models_dir / self.name / f'model_{num}.pt'))
 
         self.d_loss = float(total_disc_loss.item())
         self.g_loss = float(total_gen_loss.item())

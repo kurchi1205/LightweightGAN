@@ -53,7 +53,8 @@ class ImageDataset(Dataset):
 
     def __getitem__(self, index):
         img = self.data[index]["image"]
-        img = np.array(img)
+        img = np.array(img, dtype=np.float32)
+        img = (img - 127.5)/255
         return self.transform(image=img)
     
 
