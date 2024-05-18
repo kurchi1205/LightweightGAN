@@ -24,10 +24,10 @@ class Trainer:
         self.name = args.name
         base_dir = '/'
         self.base_dir = base_dir
-        self.models_dir = base_dir / args.models_dir
-        self.fid_dir = base_dir / 'fid' / self.name
+        self.models_dir = f"{base_dir}/{args.models_dir}"
+        self.fid_dir = f"{base_dir}/'fid'/{self.name}"
 
-        self.config_path = self.models_dir / self.name / '.config.json'
+        self.config_path = f"{self.models_dir}/{self.name}/.config.json"
 
         assert is_power_of_two(args.image_size), 'image size must be a power of 2 (64, 128, 256, 512, 1024)'
         assert all(map(is_power_of_two, args.attn_res_layers)), 'resolution layers of attention must all be powers of 2 (16, 32, 64, 128, 256, 512)'
