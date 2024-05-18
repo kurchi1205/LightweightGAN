@@ -54,6 +54,7 @@ class Trainer:
         self.optimizer = args.optimizer
         self.num_workers = args.num_workers
         self.batch_size = args.batch_size
+        self.val_batch_size = args.val_batch_size
         self.gradient_accumulate_every = args.gradient_accumulate_every
         self.training_iters = args.training_iters
         self.evaluate_every = args.evaluate_every
@@ -85,8 +86,8 @@ class Trainer:
 
         self.train_dataset, self.val_dataset, self.test_dataset = get_data(self.image_size, self.aug_prob)
         self.train_loader = DataLoader(self.train_dataset, num_workers = self.num_workers, batch_size = self.batch_size, shuffle = True, drop_last = True, pin_memory = True)
-        self.val_loader = DataLoader(self.val_dataset, num_workers = self.num_workers, batch_size = self.batch_size, shuffle = False, drop_last = True, pin_memory = True)
-        self.test_loader = DataLoader(self.test_dataset, num_workers = self.num_workers, batch_size = self.batch_size, shuffle = False, drop_last = True, pin_memory = True)
+        self.val_loader = DataLoader(self.val_dataset, num_workers = self.num_workers, batch_size = self.val_batch_size, shuffle = False, drop_last = True, pin_memory = True)
+        self.test_loader = DataLoader(self.test_dataset, num_workers = self.num_workers, batch_size = self.val_batch_size, shuffle = False, drop_last = True, pin_memory = True)
         
         current_datetime = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         wandb.init(

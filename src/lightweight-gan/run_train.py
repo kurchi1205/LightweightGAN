@@ -17,6 +17,7 @@ def run_train():
     args.add_argument('--optimizer', type=str, default='adam')
     args.add_argument('--num_workers', type = int, default = 4)
     args.add_argument('--batch_size', type = int, default = 16)
+    args.add_argument('--val_batch_size', type = int, default = 1)
     args.add_argument('--training_iters', type = int, default = 100)
     args.add_argument('--gradient_accumulate_every', type = int, default = 1)
     args.add_argument('--evaluate_every', type = int, default = 10)
