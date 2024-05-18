@@ -1,0 +1,8 @@
+accelerate
+pillow==10.3.0
+kornia==0.7.2
+einops==0.8.0
+datasets==2.19.1
+torchvision==0.17.2
+albumentations==1.4.7
+wandb==0.17.0
