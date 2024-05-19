@@ -196,23 +196,23 @@ class Trainer:
                     logger.info(f"[Iter {iter+1}/{self.training_iters}]    Discriminator loss: {np.mean(disc_loss_list)}, Generator loss: {np.mean(gen_loss_list)}")
                     wandb.log({"Generator loss": np.mean(gen_loss_list), "Discriminator loss": np.mean(disc_loss_list)}, step=iter)
 
-                # if iter % 10 == 0 and iter > 20000:
-                #     self.GAN.EMA()
+                if iter % 10 == 0 and iter > 20000:
+                    self.GAN.EMA()
 
-                # if iter <= 25000 and iter % 1000 == 0:
-                #     self.GAN.reset_parameter_averaging()
+                if iter <= 25000 and iter % 1000 == 0:
+                    self.GAN.reset_parameter_averaging()
 
                 if iter % self.evaluate_every == 0:
                     logger.info("Validating")
                     self.validate(self.val_loader, iter)
 
-                # if iter % self.checkpoint_every == 0:
-                #     logger.info("Saving model")
-                #     save_data = {
-                #         'GAN': self.GAN.state_dict(),
-                #     }
-                #     num = iter / self.checkpoint_every
-                #     torch.save(save_data, str(self.models_dir / self.name / f'model_{num}.pt'))
+                if iter % self.checkpoint_every == 0:
+                    logger.info("Saving model")
+                    save_data = {
+                        'GAN': self.GAN.state_dict(),
+                    }
+                    num = iter / self.checkpoint_every
+                    torch.save(save_data, f"{self.models_dir}/model_{num}.pt")
 
                 pbar.update(1)
         self.d_loss = float(total_disc_loss.item())
