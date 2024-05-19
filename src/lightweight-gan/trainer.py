@@ -3,7 +3,7 @@ from utils import is_power_of_two, image_to_pil, init_folders
 from pathlib import Path
 from model import init_GAN
 from data import get_data
-from loss import dual_contrastive_loss, hinge_loss
+from loss import dual_contrastive_loss, hinge_loss, gen_hinge_loss
 from metrics import calculate_fid_given_images
 from accelerate import Accelerator
 from torch.optim import Adam
@@ -13,6 +13,7 @@ import numpy as np
 import datetime
 import wandb
 import logging
+import time
 from tqdm import tqdm
 
 # wandb.login()
@@ -146,22 +147,24 @@ class Trainer:
             G_loss_fn = dual_contrastive_loss
             G_requires_calc_real = True
         else:
-            G_loss_fn = hinge_loss
+            G_loss_fn = gen_hinge_loss
             G_requires_calc_real = False
 
-        self.D_opt.zero_grad()
-        self.G_opt.zero_grad()
+        
         latents = torch.randn(self.batch_size, self.latent_dim).to(self.acc.device)
         with tqdm(total=self.training_iters, desc="Training") as pbar:
             for iter in range(self.training_iters):
                 disc_loss_list = []
                 gen_loss_list = []
                 for image_batch in self.train_loader: 
+                    self.D_opt.zero_grad()
+                    self.G_opt.zero_grad()
                     real_images = image_batch["image"]
                     with self.acc.accumulate():
                         with torch.no_grad():
-                            generated_images = self.G(latents)
+                            generated_images = self.G(latents)   
                         fake_output, fake_output_32x32, _ = self.D(generated_images)
+                        st = time.time()
                         real_output, real_output_32x32, real_aux_loss = self.D(real_images, calc_aux_loss = True)
 
                         divergence = D_loss_fn(real_output, fake_output)
@@ -175,21 +178,21 @@ class Trainer:
                         total_disc_loss += divergence
                         self.D_opt.step()
 
-                        if G_requires_calc_real:
-                            generated_images = self.G(latents)
+                        generated_images = self.G(latents)
+                        fake_output, fake_output_32x32, _ = self.D(generated_images)
+                        real_output, real_output_32x32, _ = self.D(real_images) if G_requires_calc_real else (None, None, None)
+                        loss = G_loss_fn(fake_output, real_output)
+                        loss_32x32 = G_loss_fn(fake_output_32x32, real_output_32x32)
 
-                            fake_output, fake_output_32x32, _ = self.D(generated_images)
-                            real_output, real_output_32x32, _ = self.D(real_images)
-
-                            loss = G_loss_fn(fake_output, real_output)
-                            loss_32x32 = G_loss_fn(fake_output_32x32, real_output_32x32)
-
-                            gen_loss = loss + loss_32x32
-                            gen_loss_list.append(gen_loss.item())
-                            self.acc.backward(gen_loss)
-                            self.G_opt.step()
-                            total_gen_loss += loss
+                        gen_loss = loss + loss_32x32
+                        gen_loss_list.append(gen_loss.item())
+                        self.acc.backward(gen_loss)
+                        self.G_opt.step()
+                        total_gen_loss += loss
+                    
                 if iter % 100 == 0:
+                    if len(gen_loss_list) == 0:
+                        gen_loss_list = [0]
                     logger.info(f"[Iter {iter+1}/{self.training_iters}]    Discriminator loss: {np.mean(disc_loss_list)}, Generator loss: {np.mean(gen_loss_list)}")
                     wandb.log({"Generator loss": np.mean(gen_loss_list), "Discriminator loss": np.mean(disc_loss_list)}, step=iter)
 

@@ -13,7 +13,6 @@ def resize_to_minimum_size(min_size, image):
         return torchvision.transforms.functional.resize(image, min_size)
     return image
 
-
 def load_data(data_name, sample=None):
     # "julianmoraes/doodles-captions-BLIP"
     dataset = load_dataset(data_name, split="train")
@@ -26,6 +25,7 @@ def load_data(data_name, sample=None):
     test = dataset.select(range(train_size, train_size + test_size))
     val = dataset.select(range(train_size + test_size, len(dataset)))
     return train, test, val
+
 
 
 class ImageDataset(Dataset):
@@ -54,7 +54,7 @@ class ImageDataset(Dataset):
     def __getitem__(self, index):
         img = self.data[index]["image"]
         img = np.array(img, dtype=np.float32)
-        img = (img - 127.5)/255
+        img = (img - 127.5)/127.5
         return self.transform(image=img)
     
 

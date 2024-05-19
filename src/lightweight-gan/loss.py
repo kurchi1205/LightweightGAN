@@ -16,3 +16,6 @@ def dual_contrastive_loss(real_logits, fake_logits):
 
 def hinge_loss(real, fake):
     return (F.relu(1 + real) + F.relu(1 - fake)).mean()
+
+def gen_hinge_loss(fake, real):
+    return fake.mean()
