@@ -124,6 +124,7 @@ class Trainer:
 
 
         self.acc = Accelerator(device_placement=True, gradient_accumulation_steps=self.gradient_accumulate_every)
+        print(self.acc.device)
 
 
     @property
@@ -150,24 +151,20 @@ class Trainer:
 
         self.D_opt.zero_grad()
         self.G_opt.zero_grad()
+        latents = torch.randn(self.batch_size, self.latent_dim).to(self.acc.device)
         with tqdm(total=self.training_iters, desc="Training") as pbar:
             for iter in range(self.training_iters):
-                latents = torch.randn(self.batch_size, self.latent_dim).to(self.acc.device)
                 disc_loss_list = []
                 gen_loss_list = []
-                for image_batch in tqdm(self.train_loader): 
+                for image_batch in self.train_loader: 
                     real_images = image_batch["image"]
                     with self.acc.accumulate():
                         with torch.no_grad():
                             generated_images = self.G(latents)
-                        generated_images = generated_images.to(self.acc.device)
                         fake_output, fake_output_32x32, _ = self.D(generated_images)
-                        real_output, real_output_32x32, real_aux_loss = self.D(real_images,  calc_aux_loss = True)
+                        real_output, real_output_32x32, real_aux_loss = self.D(real_images, calc_aux_loss = True)
 
-                        real_output_loss = real_output
-                        fake_output_loss = fake_output
-
-                        divergence = D_loss_fn(real_output_loss, fake_output_loss)
+                        divergence = D_loss_fn(real_output, fake_output)
                         divergence_32x32 = D_loss_fn(real_output_32x32, fake_output_32x32)
                         disc_loss = divergence + divergence_32x32
 
@@ -175,15 +172,14 @@ class Trainer:
                         disc_loss = disc_loss + aux_loss
                         disc_loss_list.append(disc_loss.item())
                         self.acc.backward(disc_loss)
-                        self.D_opt.step()
                         total_disc_loss += divergence
+                        self.D_opt.step()
 
                         if G_requires_calc_real:
                             generated_images = self.G(latents)
-                            generated_images = generated_images.to(self.acc.device)
 
                             fake_output, fake_output_32x32, _ = self.D(generated_images)
-                            real_output, real_output_32x32, real_aux_loss = self.D(real_images,  calc_aux_loss = True)
+                            real_output, real_output_32x32, _ = self.D(real_images)
 
                             loss = G_loss_fn(fake_output, real_output)
                             loss_32x32 = G_loss_fn(fake_output_32x32, real_output_32x32)
@@ -193,14 +189,15 @@ class Trainer:
                             self.acc.backward(gen_loss)
                             self.G_opt.step()
                             total_gen_loss += loss
-                logger.info(f"[Iter {iter+1}/{self.training_iters}]    Discriminator loss: {np.mean(disc_loss_list)}, Generator loss: {np.mean(gen_loss_list)}")
-                wandb.log({"Generator loss": np.mean(gen_loss_list), "Discriminator loss": np.mean(disc_loss_list)}, step=iter)
+                if iter % 100 == 0:
+                    logger.info(f"[Iter {iter+1}/{self.training_iters}]    Discriminator loss: {np.mean(disc_loss_list)}, Generator loss: {np.mean(gen_loss_list)}")
+                    wandb.log({"Generator loss": np.mean(gen_loss_list), "Discriminator loss": np.mean(disc_loss_list)}, step=iter)
 
-                if iter % 10 == 0 and iter > 20000:
-                    self.GAN.EMA()
+                # if iter % 10 == 0 and iter > 20000:
+                #     self.GAN.EMA()
 
-                if iter <= 25000 and iter % 1000 == 0:
-                    self.GAN.reset_parameter_averaging()
+                # if iter <= 25000 and iter % 1000 == 0:
+                #     self.GAN.reset_parameter_averaging()
 
                 if iter % self.evaluate_every == 0:
                     logger.info("Validating")
@@ -214,6 +211,7 @@ class Trainer:
                 #     num = iter / self.checkpoint_every
                 #     torch.save(save_data, str(self.models_dir / self.name / f'model_{num}.pt'))
 
+                pbar.update(1)
         self.d_loss = float(total_disc_loss.item())
         self.g_loss = float(total_gen_loss.item())
 
@@ -225,10 +223,10 @@ class Trainer:
             with torch.no_grad():
                 latents = torch.randn(self.val_batch_size, self.latent_dim).to(self.acc.device)
                 generated_images = self.G(latents)
-            fid_score = calculate_fid_given_images(generated_images, image_batch, self.batch_size, "cuda")
+            # fid_score = calculate_fid_given_images(generated_images, image_batch, self.batch_size, "cuda")
             pil_generated_images = [image_to_pil(image) for image in generated_images]
             pil_true_images = [image_to_pil(image) for image in real_images]
-            wandb.log({"FID score": fid_score}, step=step)
+            # wandb.log({"FID score": fid_score}, step=step)
             wandb.log({"Generated images": [wandb.Image(image) for image in pil_generated_images], "True images": [wandb.Image(image) for image in pil_true_images]}, step=step)
             step += 1
             if iter == self.calculate_fid_num_images - 1:
