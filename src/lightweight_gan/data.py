@@ -41,11 +41,17 @@ class ImageDataset(Dataset):
         self.data = data
         if isinstance(image_size, int):
             image_size = (image_size, image_size)
-        self.transform = A.Compose([
-            A.Resize(height=image_size[0], width=image_size[1]),
-            A.HorizontalFlip(p=0.5),
-            A.CoarseDropout(p=0.5, max_holes=8, max_height=16, max_width=16, min_holes=1, min_height=8, min_width=8),
-            ToTensorV2(),
+        # self.transform = A.Compose([
+        #     A.Resize(height=image_size[0], width=image_size[1]),
+        #     A.HorizontalFlip(p=0.5),
+        #     A.CoarseDropout(p=0.5, max_holes=8, max_height=16, max_width=16, min_holes=1, min_height=8, min_width=8),
+        #     ToTensorV2(),
+        # ])
+        self.transform = transforms.Compose([
+            transforms.Resize(image_size),  # Single argument for both height and width
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomErasing(p=0.5, scale=(0.02, 0.33), ratio=(0.3, 3.3), value=0),  # Similar to CoarseDropout
+            transforms.ToTensor(),
         ])
 
     def __len__(self):
