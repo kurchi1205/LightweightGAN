@@ -23,6 +23,7 @@ def run_train():
     parser.add_argument('--gradient_accumulate_every', type = int, default = 1)
     parser.add_argument('--evaluate_every', type = int, default = 10)
     parser.add_argument('--checkpoint_every', type = int, default = 10)
+    parser.add_argument('--resume_from_checkpoint', type = str, default = None)
     parser.add_argument('--ttur_mult', type = int, default = 1)
     parser.add_argument('--freq_chan_attn', action = 'store_true')
     parser.add_argument('--disc_output_size', type = int, default = 5)
