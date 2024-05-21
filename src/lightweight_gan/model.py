@@ -303,10 +303,10 @@ class Generator(nn.Module):
 
         for (res, (chan_in, chan_out)) in zip(self.res_layers, in_out_features):
             image_width = 2 ** res
-
             attn = None
-            # if image_width in attn_res_layers:
-            #     attn = PreNorm(chan_in, LinearAttention(chan_in))
+            if image_width in attn_res_layers:
+                print(f'Adding attention layer at resolution {image_width}')
+                attn = PreNorm(chan_in, LinearAttention(chan_in))
 
             sle = None
             if res in self.sle_map:
@@ -385,7 +385,6 @@ class Discriminator(nn.Module):
             init_channel = 3
 
         num_non_residual_layers = max(0, int(resolution) - 8)
-        num_residual_layers = 8 - 3
 
         non_residual_resolutions = range(min(8, resolution), 2, -1)
         features = list(map(lambda n: (n,  2 ** (fmap_inverse_coef - n)), non_residual_resolutions))
@@ -415,6 +414,9 @@ class Discriminator(nn.Module):
             image_width = 2 ** res
 
             attn = None
+            if image_width in attn_res_layers:
+                print(f'Adding attention layer at resolution {image_width}')
+                attn = PreNorm(chan_in, LinearAttention(chan_in))
 
             self.residual_layers.append(nn.ModuleList([
                 SumBranches([
