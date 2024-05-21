@@ -63,6 +63,7 @@ class Trainer:
         self.evaluate_every = args.evaluate_every
         self.checkpoint_every = args.checkpoint_every
         self.steps = 0
+        self.resume_from_checkpoint = args.resume_from_checkpoint
 
         self.attn_res_layers = args.attn_res_layers
         self.freq_chan_attn = args.freq_chan_attn # default values has to be found
@@ -113,6 +114,11 @@ class Trainer:
             transparent = self.transparent,
             greyscale = self.greyscale,
         )
+        if self.resume_from_checkpoint:
+            logger.info(f"Resuming from checkpoint {self.resume_from_checkpoint}")
+            model = torch.load(self.resume_from_checkpoint)
+            self.GAN.load_state_dict(model['GAN'])
+
         self.G = self.GAN.G
         self.D = self.GAN.D
         self.GE = self.GAN.GE
