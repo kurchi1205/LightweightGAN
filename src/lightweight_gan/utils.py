@@ -12,7 +12,11 @@ def default(val, d):
         return d
     return val
 
-
+def cycle(iterable):
+    while True:
+        for i in iterable:
+            yield i
+            
 def image_to_pil(image):
     ndarr = image.add_(1).mul(127.5).clamp_(0, 255).permute(1, 2, 0).to('cpu', torch.uint8).numpy()
     im = Image.fromarray(ndarr)

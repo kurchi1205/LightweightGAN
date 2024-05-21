@@ -1,5 +1,5 @@
 from math import floor
-from utils import is_power_of_two, image_to_pil, init_folders
+from utils import is_power_of_two, image_to_pil, init_folders, cycle
 from pathlib import Path
 from model import init_GAN
 from data import get_data
@@ -85,7 +85,7 @@ class Trainer:
         self.run = None
         logger.info("Loading data")
         self.train_dataset, self.val_dataset, self.test_dataset = get_data(self.data_name, self.image_size, self.aug_prob, args.sample)
-        self.train_loader = DataLoader(self.train_dataset, num_workers = self.num_workers, batch_size = self.batch_size, shuffle = True, drop_last = True, pin_memory = True)
+        self.train_loader = cycle(DataLoader(self.train_dataset, num_workers = self.num_workers, batch_size = self.batch_size, shuffle = True, drop_last = True, pin_memory = True))
         self.val_loader = DataLoader(self.val_dataset, num_workers = self.num_workers, batch_size = self.val_batch_size, shuffle = False, drop_last = True, pin_memory = True)
         self.test_loader = DataLoader(self.test_dataset, num_workers = self.num_workers, batch_size = self.val_batch_size, shuffle = False, drop_last = True, pin_memory = True)
         
@@ -159,43 +159,43 @@ class Trainer:
         
         latents = torch.randn(self.batch_size, self.latent_dim).to(self.acc.device)
         with tqdm(total=self.training_iters, desc="Training") as pbar:
-            for iter in range(self.training_iters):
+            for iter, image_batch in enumerate(self.train_loader):
+                if iter == self.training_iters:
+                    break
                 disc_loss_list = []
                 gen_loss_list = []
-                for image_batch in self.train_loader: 
-                    self.D_opt.zero_grad()
-                    self.G_opt.zero_grad()
-                    real_images = image_batch["image"]
-                    with self.acc.accumulate():
-                        with torch.no_grad():
-                            generated_images = self.G(latents)   
-                        fake_output, fake_output_32x32, _ = self.D(generated_images)
-                        st = time.time()
-                        real_output, real_output_32x32, real_aux_loss = self.D(real_images, calc_aux_loss = True)
+                self.D_opt.zero_grad()
+                self.G_opt.zero_grad()
+                real_images = image_batch["image"]
+                with self.acc.accumulate():
+                    with torch.no_grad():
+                        generated_images = self.G(latents)   
+                    fake_output, fake_output_32x32, _ = self.D(generated_images)
+                    real_output, real_output_32x32, real_aux_loss = self.D(real_images, calc_aux_loss = True)
 
-                        divergence = D_loss_fn(real_output, fake_output)
-                        divergence_32x32 = D_loss_fn(real_output_32x32, fake_output_32x32)
-                        disc_loss = divergence + divergence_32x32
+                    divergence = D_loss_fn(real_output, fake_output)
+                    divergence_32x32 = D_loss_fn(real_output_32x32, fake_output_32x32)
+                    disc_loss = divergence + divergence_32x32
 
-                        aux_loss = real_aux_loss
-                        disc_loss = disc_loss + aux_loss
-                        disc_loss_list.append(disc_loss.item())
-                        self.acc.backward(disc_loss)
-                        total_disc_loss += divergence
-                        self.D_opt.step()
+                    aux_loss = real_aux_loss
+                    disc_loss = disc_loss + aux_loss
+                    disc_loss_list.append(disc_loss.item())
+                    self.acc.backward(disc_loss)
+                    total_disc_loss += divergence
+                    self.D_opt.step()
 
-                        generated_images = self.G(latents)
-                        fake_output, fake_output_32x32, _ = self.D(generated_images)
-                        real_output, real_output_32x32, _ = self.D(real_images) if G_requires_calc_real else (None, None, None)
-                        loss = G_loss_fn(fake_output, real_output)
-                        loss_32x32 = G_loss_fn(fake_output_32x32, real_output_32x32)
+                    generated_images = self.G(latents)
+                    fake_output, fake_output_32x32, _ = self.D(generated_images)
+                    real_output, real_output_32x32, _ = self.D(real_images) if G_requires_calc_real else (None, None, None)
+                    loss = G_loss_fn(fake_output, real_output)
+                    loss_32x32 = G_loss_fn(fake_output_32x32, real_output_32x32)
 
-                        gen_loss = loss + loss_32x32
-                        gen_loss_list.append(gen_loss.item())
-                        self.acc.backward(gen_loss)
-                        self.G_opt.step()
-                        total_gen_loss += loss
-                    
+                    gen_loss = loss + loss_32x32
+                    gen_loss_list.append(gen_loss.item())
+                    self.acc.backward(gen_loss)
+                    self.G_opt.step()
+                    total_gen_loss += loss
+
                 if iter % 100 == 0:
                     if len(gen_loss_list) == 0:
                         gen_loss_list = [0]
